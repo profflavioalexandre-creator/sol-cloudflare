@@ -24,8 +24,8 @@ DIDÁTICA (como um professor com 25 anos de sala)
   pré-requisito, passo a passo, resposta e, se couber, uma dica de prova.
 - Explique o PORQUÊ, não só o como. Use exemplo resolvido e depois peça ao aluno para tentar um parecido.
 - Diagnostique o erro: quando o aluno errar, descubra a ideia errada por trás (o equívoco) e corrija a ideia, não só a conta.
-- Verifique a compreensão no final com UMA pergunta curta ("Me diz com suas palavras: ...?" ou "Tenta este: ...").
-- Use perguntas que fazem o aluno pensar (método socrático) quando ele estiver perto de chegar sozinho.
+- RESPONDA DE VERDADE: primeiro explique e resolva o que o aluno pediu, com raciocínio claro e correto. Nada de devolver a pergunta para o aluno sem antes ensinar.
+- Só às vezes, e no final, faça UMA pergunta curta para checar se ele entendeu. Não termine toda resposta com pergunta.
 - Ensine a estudar: lembrar sem olhar (recuperação ativa), revisar em dias espaçados, misturar tipos de questão, explicar para alguém,
   resumo com as próprias palavras e mapa mental. Indique a técnica certa para cada situação.
 - Uma explicação por vez: se o assunto for grande, divida e pergunte se pode continuar.
@@ -41,8 +41,8 @@ POR DISCIPLINA
 
 MODOS
 - modo "tela": a resposta é falada e aparece como legenda ao lado do material. Responda sobre o que o aluno está vendo (contexto e imagem da página).
-  Seja rápido e direto como numa conversa de voz: até 70 palavras. Se precisar de mais, explique a primeira parte e pergunte se pode continuar.
-- modo "livre": conversa em tela inteira, sobre qualquer matéria ou sobre como o aluno está. Até 110 palavras; assunto grande, divida em partes e pergunte se pode continuar.
+  Seja direto como numa conversa de voz: até 90 palavras. Se precisar de mais, explique a primeira parte e pergunte se pode continuar.
+- modo "livre": conversa em tela inteira, sobre qualquer matéria ou sobre como o aluno está. Até 130 palavras; assunto grande, divida em partes e pergunte se pode continuar.
 - Comece JÁ pela resposta, sem frases de abertura como "Ótima pergunta" ou "Claro, vou te explicar".
 
 A PÁGINA NA TELA (muito importante)
@@ -109,7 +109,9 @@ aulas numeradas por disciplina (apostila, simulado e vídeo com o mesmo número)
 Maratona Semanal, relatório de equilíbrio entre disciplinas (alerta acima de 30% e abaixo de 10%) e tempo real de estudo.
 Você recebe os dados atuais dos alunos e do material. Responda ao professor de forma objetiva e direta, com números,
 apontando quem precisa de atenção e sugerindo ações práticas (conversar com o aluno, reforçar uma disciplina, publicar material).
-Use somente os dados recebidos; se algo não estiver nos dados, diga que não tem essa informação. Os dados são confidenciais.`;
+Use somente os dados recebidos; se algo não estiver nos dados, diga que não tem essa informação. Os dados são confidenciais.
+Sua resposta é FALADA em voz alta: no máximo 80 palavras, frases curtas, comece pela resposta (número, nome, situação). Sem listas longas nem símbolos.
+Se o professor pedir para parar, mudar de assunto ou fazer outra coisa, obedeça na hora e responda em uma frase.`;
 
 const corta = (s, n) => String(s || '').slice(0, n);
 
@@ -117,14 +119,16 @@ const corta = (s, n) => String(s || '').slice(0, n);
 let ORIGEM = '*';
 const VOZES = ['Charon','Iapetus','Sadaltager','Achird','Orus','Sulafat','Vindemiatrix','Achernar','Kore','Aoede'];
 const limpaFala = t => String(t || '').replace(/\*\*/g, '').replace(/[•“”#_]/g, ' ').replace(/\n+/g, '. ').replace(/\s+/g, ' ').trim().slice(0, 1800);
+let VOZ_PAUSA = 0;   // se a voz do Google falhar (cota ou lentidão), o Sol usa a voz do aparelho por alguns minutos
 async function falar(texto, vozPedida, chave, ate) {
+  if (Date.now() < VOZ_PAUSA) return null;
   const voz = VOZES.includes(vozPedida) ? vozPedida : 'Charon';
   const modelos = (ENV.GEMINI_TTS_MODEL || 'gemini-3.8-flash-lite-tts,gemini-3.8-flash-tts').split(',').map(m => m.trim()).filter(Boolean);
   const r = await google(modelos, {
     contents: [{ parts: [{ text: limpaFala(texto) }] }],
     generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } } }
-  }, chave, null, ate);
-  if (!r.ok) return null;
+  }, chave, null, ate, 4500);
+  if (!r.ok) { VOZ_PAUSA = Date.now() + (r.status === 429 ? 10 : 3) * 60000; return null; }
   const parte = (r.j.candidates?.[0]?.content?.parts || []).find(p => p.inlineData || p.inline_data);
   const d = parte && (parte.inlineData || parte.inline_data);
   return d && d.data ? { audio: d.data, mime: d.mimeType || d.mime_type || 'audio/L16;rate=24000' } : null;
@@ -148,7 +152,7 @@ function origemPermitida(origin) {
 const NUVEM_LONGA = true;
 // Raciocínio interno ("thinking") deixa a resposta lenta: pedimos o mínimo. Cada modelo aceita um formato diferente,
 // então tentamos na ordem: thinkingBudget 0 → thinkingLevel "minimal" → "low" → sem configuração (e guardamos o que deu certo).
-const PENSAR = [{ thinkingBudget: 0 }, { thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, null];
+const PENSAR = [{ thinkingLevel: 'minimal' }, { thinkingBudget: 0 }, { thinkingLevel: 'low' }, null];
 const PENSAR_OK = {};
 const rot = v => v >= 0 ? (PENSAR[v] ? JSON.stringify(PENSAR[v]) : 'padrão') : undefined;
 // Um modelo: tenta os formatos de raciocínio e a chave no cabeçalho/URL
@@ -191,7 +195,7 @@ async function umModelo(m, corpo, chave, log, ate, porTentativa, geral) {
 }
 // Chama o Google. paralelo = true: pergunta a todos os modelos ao mesmo tempo e fica com a primeira resposta boa
 // (o Sol responde na velocidade do modelo mais rápido do momento); senão, um depois do outro.
-async function google(modelos, corpo, chave, log, ate = Date.now() + 8500, porTentativa = 0, paralelo = false) {
+async function google(modelos, corpo, chave, log, ate = Date.now() + 8500, porTentativa = 0, paralelo = false, largadas = null) {
   if (!paralelo) {
     for (const m of modelos) {
       const r = await umModelo(m, corpo, chave, log, ate, porTentativa, null);
@@ -202,13 +206,15 @@ async function google(modelos, corpo, chave, log, ate = Date.now() + 8500, porTe
   const geral = new AbortController();
   return await new Promise(fim => {
     let restam = modelos.length, limite = false;
-    for (const m of modelos) {
-      umModelo(m, corpo, chave, log, ate, porTentativa, geral.signal).then(r => {
+    modelos.forEach((m, i) => {
+      const espera = largadas ? (largadas[i] || 0) : 0;
+      const vai = () => geral.signal.aborted ? Promise.resolve({ ok: false }) : umModelo(m, corpo, chave, log, ate, porTentativa, geral.signal);
+      (espera ? new Promise(ok => setTimeout(ok, espera)).then(vai) : vai()).then(r => {
         if (r.ok) { geral.abort(); fim(r); return; }
         if (r.status === 429) limite = true;
         if (--restam === 0) fim({ ok: false, status: limite ? 429 : undefined });
       });
-    }
+    });
   });
 }
 // Primeiro trecho da resposta (1 ou 2 frases): a voz dele é gerada já nesta chamada para o Sol começar a falar logo;
@@ -220,7 +226,9 @@ function corteInicial(t) {
   if (!melhor) { const sp = t.lastIndexOf(' ', 160); melhor = sp > 40 ? sp : Math.min(t.length, 160); }
   return melhor;
 }
-const MODELOS_TEXTO = () => (ENV.GEMINI_MODEL || 'gemini-flash-lite-latest,gemini-flash-latest,gemini-3.8-flash').split(',').map(m => m.trim()).filter(Boolean);
+// largadas (ms): o flash começa já; o flash-lite entra aos 2,5 s e o 3.8-flash aos 5 s, se ninguém tiver respondido
+const LARGADAS = () => (ENV.GEMINI_LARGADAS || '0,2500,5000').split(',').map(Number);
+const MODELOS_TEXTO = () => (ENV.GEMINI_MODEL || 'gemini-flash-latest,gemini-flash-lite-latest,gemini-3.8-flash').split(',').map(m => m.trim()).filter(Boolean);
 
 const responder = async (req) => {
   ORIGEM = origemPermitida(req.headers.get('origin'));
@@ -228,7 +236,18 @@ const responder = async (req) => {
   const chave = (ENV.GEMINI_API_KEY || '').trim();
   // Teste: abra /.netlify/functions/sol?teste=1 no navegador para ver se a ligação com o Google funciona
   if (req.method === 'GET') {
-    if (!new URL(req.url).searchParams.has('teste')) return new Response('Use POST', { status: 405, headers: CORS() });
+    const q = new URL(req.url).searchParams;
+    if (!q.has('teste')) return new Response('Use POST', { status: 405, headers: CORS() });
+    if (q.get('teste') === '2' && chave) {
+      const t0 = Date.now(), log = [];
+      const r = await google(MODELOS_TEXTO(), { system_instruction: { parts: [{ text: SISTEMA }] }, contents: [{ role: 'user', parts: [{ text: 'Aluno: Ana • 9º ano\nModo: tela\nPergunta do aluno: por que na equação 3x + 7 = 22 o 7 passa para o outro lado subtraindo?' }] }], generationConfig: { temperature: 0.6, maxOutputTokens: 600, thinkingConfig: { thinkingBudget: 0 } } }, chave, log, Date.now() + 15000, 14000, true, LARGADAS());
+      const tT = Date.now() - t0, texto = r.ok ? (r.j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim() : '';
+      const t1 = Date.now(); VOZ_PAUSA = 0;
+      const a = texto ? await falar(texto.slice(0, corteInicial(texto)), 'Charon', chave, Date.now() + 8000) : null;
+      return json({ resultado: r.ok ? 'Pergunta respondida' : 'Falhou', modelo: r.modelo || null, tempo_do_texto: `${(tT/1000).toFixed(1)} s`,
+        voz_do_google: a ? `ok em ${((Date.now()-t1)/1000).toFixed(1)} s` : `falhou em ${((Date.now()-t1)/1000).toFixed(1)} s (o app usa a voz do aparelho)`,
+        resposta: texto, tentativas: log });
+    }
     if (!chave) return json({ resultado: 'FALTA A CHAVE: na Cloudflare, abra o Worker > Settings > Variables and Secrets e crie GEMINI_API_KEY (tipo Secret).' });
     const log = [];
     const r = await google(MODELOS_TEXTO(), { contents: [{ parts: [{ text: 'Responda só: Sol ligado.' }] }], generationConfig: { thinkingConfig: { thinkingBudget: 0 } } }, chave, log, Date.now() + (NUVEM_LONGA ? 25000 : 9500), NUVEM_LONGA ? 22000 : 8000, true);
@@ -281,18 +300,22 @@ const responder = async (req) => {
     system_instruction: { parts: [{ text: mentor ? SISTEMA_MENTOR : SISTEMA }] },
     contents,
     generationConfig: { temperature: 0.6, maxOutputTokens: 600, thinkingConfig: { thinkingBudget: 0 } }
-  }, chave, null, inicio + (NUVEM_LONGA ? 15000 : 7600), NUVEM_LONGA ? 14000 : 7000, true);
-  if (r.status === 429) return json({ texto: 'Muita gente me chamando agora! Me pergunta de novo daqui a um minutinho.' });
+  }, chave, null, inicio + (NUVEM_LONGA ? 15000 : 7600), NUVEM_LONGA ? 14000 : 7000, true, LARGADAS());
+  const tTexto = Date.now() - inicio;
+  if (r.status === 429) return json({ texto: 'Muita gente me chamando agora! Me pergunta de novo daqui a um minutinho.', semVoz: true });
   if (!r.ok) return json({ texto: '' }, 502);
   const texto = (r.j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
   if (/^\[?IGNORAR\]?\.?$/i.test(texto) || /^\[IGNORAR\]/i.test(texto)) return json({ texto: '', ignorar: true });
   // já devolve a voz do primeiro trecho: o Sol começa a falar em poucos segundos
+  const info = { modelo: r.modelo, t_texto: tTexto };
   if (texto && b.voz && (NUVEM_LONGA || Date.now() - inicio < 7600)) {
-    const corte = corteInicial(texto);
-    const a = await falar(texto.slice(0, corte), b.voz, chave, NUVEM_LONGA ? Date.now() + 8000 : Math.min(Date.now() + 5000, inicio + 9400));
-    if (a) return json({ texto, corte, ...a });
+    const corte = corteInicial(texto), t1 = Date.now();
+    const a = await falar(texto.slice(0, corte), b.voz, chave, NUVEM_LONGA ? Date.now() + 5000 : Math.min(Date.now() + 4500, inicio + 9400));
+    info.t_voz = Date.now() - t1;
+    if (a) return json({ texto, corte, ...a, ...info });
+    return json({ texto, semVoz: true, ...info });   // a voz do Google não veio: o app fala com a voz do aparelho na hora
   }
-  return json({ texto });
+  return json({ texto, ...info });
 };
 
 export default {
