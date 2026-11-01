@@ -144,47 +144,72 @@ function origemPermitida(origin) {
   return ok ? origin : site;
 }
 // Chama o Google tentando os modelos da lista e, se a chave não for aceita no cabeçalho, também pela URL
-// porTentativa: tempo máximo de cada tentativa; se um modelo do Google travar, passa logo para o próximo da lista.
+// Tempo de espera: no Netlify a função tem só 10 s; na Cloudflare pode esperar mais (NUVEM_LONGA = true).
+const NUVEM_LONGA = true;
 // Raciocínio interno ("thinking") deixa a resposta lenta: pedimos o mínimo. Cada modelo aceita um formato diferente,
-// então tentamos na ordem: thinkingBudget 0 → thinkingLevel "minimal" → sem configuração (e guardamos o que deu certo).
+// então tentamos na ordem: thinkingBudget 0 → thinkingLevel "minimal" → "low" → sem configuração (e guardamos o que deu certo).
 const PENSAR = [{ thinkingBudget: 0 }, { thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, null];
 const PENSAR_OK = {};
-async function google(modelos, corpo, chave, log, ate = Date.now() + 8500, porTentativa = 0) {
+const rot = v => v >= 0 ? (PENSAR[v] ? JSON.stringify(PENSAR[v]) : 'padrão') : undefined;
+// Um modelo: tenta os formatos de raciocínio e a chave no cabeçalho/URL
+async function umModelo(m, corpo, chave, log, ate, porTentativa, geral) {
   const querPensarPouco = !!(corpo.generationConfig && corpo.generationConfig.thinkingConfig);
-  for (const m of modelos) {
-    let modo = 'cabecalho';
-    const ordem = querPensarPouco ? PENSAR.map((_, i) => i).filter(i => i >= (PENSAR_OK[m] || 0)) : [-1];
-    for (let k = 0; k < ordem.length; k++) {
-      const v = ordem[k];
-      const gc = { ...(corpo.generationConfig || {}) };
-      if (v >= 0) { if (PENSAR[v]) gc.thinkingConfig = PENSAR[v]; else delete gc.thinkingConfig; }
-      const c2 = { ...corpo, generationConfig: gc };
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent` + (modo === 'url' ? `?key=${encodeURIComponent(chave)}` : '');
-      const headers = { 'Content-Type': 'application/json' };
-      if (modo === 'cabecalho') headers['x-goog-api-key'] = chave;
-      const resta = ate - Date.now();
-      if (resta < 800) return { ok: false, status: 408 };
-      const lim = porTentativa ? Math.min(resta, porTentativa) : resta;
-      const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), lim);
-      try {
-        const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(c2), signal: ctl.signal });
-        clearTimeout(tm);
-        if (r.ok) { if (v >= 0) PENSAR_OK[m] = v; return { ok: true, j: await r.json(), modelo: m + (v >= 0 ? ` (raciocínio: ${PENSAR[v] ? JSON.stringify(PENSAR[v]) : 'padrão'})` : '') }; }
-        const erro = (await r.text()).slice(0, 300);
-        log && log.push({ modelo: m, modo, raciocinio: v >= 0 ? (PENSAR[v] ? JSON.stringify(PENSAR[v]) : 'padrão') : undefined, status: r.status, erro });
-        console.log('Sol: Google respondeu', r.status, m, modo, erro);
-        if (r.status === 429) return { ok: false, status: 429 };
-        if ((r.status === 401 || r.status === 403) && modo === 'cabecalho') { modo = 'url'; k--; continue; }   // chave pela URL
-        if (r.status === 400 && v >= 0 && k < ordem.length - 1) continue;                                      // outro formato de raciocínio
-        break;                                                                                                   // próximo modelo
-      } catch (e) {
-        clearTimeout(tm);
-        log && log.push({ modelo: m, modo, erro: (ctl.signal.aborted ? `sem resposta em ${Math.round(lim/1000)} s (Google lento ou sobrecarregado)` : String(e)).slice(0, 200) });
-        console.log('Sol: falha de rede', m, String(e)); break;
-      }
-    }
+  const ordem = querPensarPouco ? PENSAR.map((_, i) => i).filter(i => i >= (PENSAR_OK[m] || 0)) : [-1];
+  let modo = 'cabecalho';
+  for (let k = 0; k < ordem.length; k++) {
+    if (geral && geral.aborted) return { ok: false };
+    const v = ordem[k];
+    const gc = { ...(corpo.generationConfig || {}) };
+    if (v >= 0) { if (PENSAR[v]) gc.thinkingConfig = PENSAR[v]; else delete gc.thinkingConfig; }
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent` + (modo === 'url' ? `?key=${encodeURIComponent(chave)}` : '');
+    const headers = { 'Content-Type': 'application/json' };
+    if (modo === 'cabecalho') headers['x-goog-api-key'] = chave;
+    const resta = ate - Date.now();
+    if (resta < 800) return { ok: false, status: 408 };
+    const lim = porTentativa ? Math.min(resta, porTentativa) : resta;
+    const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), lim);
+    const parar = () => ctl.abort(); if (geral) geral.addEventListener('abort', parar);
+    const t0 = Date.now();
+    try {
+      const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ ...corpo, generationConfig: gc }), signal: ctl.signal });
+      clearTimeout(tm);
+      if (r.ok) { const j = await r.json(); if (v >= 0) PENSAR_OK[m] = v; return { ok: true, j, modelo: m + (v >= 0 ? ` (raciocínio: ${rot(v)})` : ''), ms: Date.now() - t0 }; }
+      const erro = (await r.text()).slice(0, 300);
+      log && log.push({ modelo: m, modo, raciocinio: rot(v), status: r.status, ms: Date.now() - t0, erro });
+      console.log('Sol: Google respondeu', r.status, m, modo, erro);
+      if (r.status === 429) return { ok: false, status: 429 };
+      if ((r.status === 401 || r.status === 403) && modo === 'cabecalho') { modo = 'url'; k--; continue; }   // chave pela URL
+      if (r.status === 400 && v >= 0 && k < ordem.length - 1) continue;                                      // outro formato de raciocínio
+      return { ok: false, status: r.status };
+    } catch (e) {
+      clearTimeout(tm);
+      if (!(geral && geral.aborted)) log && log.push({ modelo: m, modo, raciocinio: rot(v), erro: (ctl.signal.aborted ? `sem resposta em ${Math.round(lim/1000)} s (Google lento ou sobrecarregado)` : String(e)).slice(0, 200) });
+      console.log('Sol: falha de rede', m, String(e)); return { ok: false };
+    } finally { if (geral) geral.removeEventListener('abort', parar); }
   }
   return { ok: false };
+}
+// Chama o Google. paralelo = true: pergunta a todos os modelos ao mesmo tempo e fica com a primeira resposta boa
+// (o Sol responde na velocidade do modelo mais rápido do momento); senão, um depois do outro.
+async function google(modelos, corpo, chave, log, ate = Date.now() + 8500, porTentativa = 0, paralelo = false) {
+  if (!paralelo) {
+    for (const m of modelos) {
+      const r = await umModelo(m, corpo, chave, log, ate, porTentativa, null);
+      if (r.ok || r.status === 429 || r.status === 408) return r;
+    }
+    return { ok: false };
+  }
+  const geral = new AbortController();
+  return await new Promise(fim => {
+    let restam = modelos.length, limite = false;
+    for (const m of modelos) {
+      umModelo(m, corpo, chave, log, ate, porTentativa, geral.signal).then(r => {
+        if (r.ok) { geral.abort(); fim(r); return; }
+        if (r.status === 429) limite = true;
+        if (--restam === 0) fim({ ok: false, status: limite ? 429 : undefined });
+      });
+    }
+  });
 }
 // Primeiro trecho da resposta (1 ou 2 frases): a voz dele é gerada já nesta chamada para o Sol começar a falar logo;
 // o resto da fala o app pede em paralelo enquanto o Sol já está falando.
@@ -206,12 +231,14 @@ const responder = async (req) => {
     if (!new URL(req.url).searchParams.has('teste')) return new Response('Use POST', { status: 405, headers: CORS() });
     if (!chave) return json({ resultado: 'FALTA A CHAVE: na Cloudflare, abra o Worker > Settings > Variables and Secrets e crie GEMINI_API_KEY (tipo Secret).' });
     const log = [];
-    const r = await google(MODELOS_TEXTO(), { contents: [{ parts: [{ text: 'Responda só: Sol ligado.' }] }], generationConfig: { thinkingConfig: { thinkingBudget: 0 } } }, chave, log, Date.now() + 9500, 4000);
+    const r = await google(MODELOS_TEXTO(), { contents: [{ parts: [{ text: 'Responda só: Sol ligado.' }] }], generationConfig: { thinkingConfig: { thinkingBudget: 0 } } }, chave, log, Date.now() + (NUVEM_LONGA ? 25000 : 9500), NUVEM_LONGA ? 22000 : 8000, true);
+    const ms = r.ok ? r.ms : null;
     return json({
       resultado: r.ok ? 'TUDO CERTO: o Sol está ligado ao Google.' : 'O Google recusou. Veja os detalhes abaixo.',
       chave: `presente, começa com ${chave.slice(0, 3)}..., ${chave.length} caracteres`,
       site_do_app: ENV.SITE_DO_APP || '(não definido)',
       modelo_que_funcionou: r.modelo || null,
+      tempo_de_resposta: ms != null ? `${(ms/1000).toFixed(1)} s` : null,
       resposta: r.ok ? (r.j.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('') : null,
       tentativas: log
     });
@@ -254,15 +281,15 @@ const responder = async (req) => {
     system_instruction: { parts: [{ text: mentor ? SISTEMA_MENTOR : SISTEMA }] },
     contents,
     generationConfig: { temperature: 0.6, maxOutputTokens: 600, thinkingConfig: { thinkingBudget: 0 } }
-  }, chave, null, inicio + 7200, 3800);
+  }, chave, null, inicio + (NUVEM_LONGA ? 15000 : 7600), NUVEM_LONGA ? 14000 : 7000, true);
   if (r.status === 429) return json({ texto: 'Muita gente me chamando agora! Me pergunta de novo daqui a um minutinho.' });
   if (!r.ok) return json({ texto: '' }, 502);
   const texto = (r.j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
   if (/^\[?IGNORAR\]?\.?$/i.test(texto) || /^\[IGNORAR\]/i.test(texto)) return json({ texto: '', ignorar: true });
   // já devolve a voz do primeiro trecho: o Sol começa a falar em poucos segundos
-  if (texto && b.voz && Date.now() - inicio < 7600) {
+  if (texto && b.voz && (NUVEM_LONGA || Date.now() - inicio < 7600)) {
     const corte = corteInicial(texto);
-    const a = await falar(texto.slice(0, corte), b.voz, chave, Math.min(Date.now() + 5000, inicio + 9400));
+    const a = await falar(texto.slice(0, corte), b.voz, chave, NUVEM_LONGA ? Date.now() + 8000 : Math.min(Date.now() + 5000, inicio + 9400));
     if (a) return json({ texto, corte, ...a });
   }
   return json({ texto });
