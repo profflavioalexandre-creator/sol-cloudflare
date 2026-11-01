@@ -206,15 +206,19 @@ async function google(modelos, corpo, chave, log, ate = Date.now() + 8500, porTe
   const geral = new AbortController();
   return await new Promise(fim => {
     let restam = modelos.length, limite = false;
-    modelos.forEach((m, i) => {
-      const espera = largadas ? (largadas[i] || 0) : 0;
-      const vai = () => geral.signal.aborted ? Promise.resolve({ ok: false }) : umModelo(m, corpo, chave, log, ate, porTentativa, geral.signal);
-      (espera ? new Promise(ok => setTimeout(ok, espera)).then(vai) : vai()).then(r => {
-        if (r.ok) { geral.abort(); fim(r); return; }
+    const iniciado = modelos.map(() => false), timers = [];
+    const largar = i => {
+      if (i >= modelos.length || iniciado[i]) return;
+      iniciado[i] = true; clearTimeout(timers[i]);
+      const p = geral.signal.aborted ? Promise.resolve({ ok: false }) : umModelo(modelos[i], corpo, chave, log, ate, porTentativa, geral.signal);
+      p.then(r => {
+        if (r.ok) { geral.abort(); timers.forEach(clearTimeout); fim(r); return; }
         if (r.status === 429) limite = true;
+        const prox = iniciado.indexOf(false); if (prox >= 0) largar(prox);   // falhou (cota/erro): o próximo modelo entra na hora
         if (--restam === 0) fim({ ok: false, status: limite ? 429 : undefined });
       });
-    });
+    };
+    modelos.forEach((m, i) => { const t = largadas ? (largadas[i] || 0) : 0; if (t) timers[i] = setTimeout(() => largar(i), t); else largar(i); });
   });
 }
 // Primeiro trecho da resposta (1 ou 2 frases): a voz dele é gerada já nesta chamada para o Sol começar a falar logo;
