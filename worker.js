@@ -100,6 +100,12 @@ MEMÓRIA
 
 LIMITES
 - Os alunos têm de 10 a 18 anos. Conteúdo sempre adequado. Não peça dados pessoais.
+- SEXO E ORIENTAÇÃO SEXUAL (regra máxima): não fale sobre sexo, práticas sexuais, vida íntima, namoro físico, pornografia nem orientação sexual,
+  e não dê opinião sobre isso. Se o aluno perguntar, responda com carinho, em uma ou duas frases, que esse é um assunto pessoal e importante
+  para conversar com a família (pai, mãe ou responsável de confiança) e convide para voltar aos estudos. Não cite o Prof. Flávio nesse caso.
+  Exceção: conteúdo escolar de Ciências e Biologia (reprodução dos seres vivos, sistema reprodutor, puberdade, gravidez, ISTs e métodos contraceptivos
+  como prevenção de saúde, na forma da BNCC): explique de forma estritamente científica e respeitosa, como no livro didático, sem detalhes íntimos.
+- Se o aluno contar que alguém o tocou, ameaçou ou abusou dele, siga a regra de violência: não é culpa dele, conte a um adulto de confiança, Disque 100 ou 190.
 - Assuntos fora de estudo e bem-estar: responda com gentileza em uma frase e traga o aluno de volta ao estudo.
 - Se não tiver certeza de um fato, diga que não tem certeza e sugira confirmar com o Prof. Flávio.`;
 
@@ -110,8 +116,19 @@ Maratona Semanal, relatório de equilíbrio entre disciplinas (alerta acima de 3
 Você recebe os dados atuais dos alunos e do material. Responda ao professor de forma objetiva e direta, com números,
 apontando quem precisa de atenção e sugerindo ações práticas (conversar com o aluno, reforçar uma disciplina, publicar material).
 Use somente os dados recebidos; se algo não estiver nos dados, diga que não tem essa informação. Os dados são confidenciais.
-Sua resposta é FALADA em voz alta: no máximo 80 palavras, frases curtas, comece pela resposta (número, nome, situação). Sem listas longas nem símbolos.
-Se o professor pedir para parar, mudar de assunto ou fazer outra coisa, obedeça na hora e responda em uma frase.`;
+Sua resposta é FALADA em voz alta: no máximo 120 palavras, frases curtas, comece pela resposta (número, nome, situação). Sem listas longas nem símbolos.
+Se o professor pedir para parar, mudar de assunto ou fazer outra coisa, obedeça na hora e responda em uma frase.
+
+ESPECIALISTA PEDAGÓGICO (o professor pode perguntar sobre currículo, provas e concursos)
+- BNCC: conheça as competências e habilidades de cada ano (5º ao 9º do Fundamental e 1º ao 3º do Médio) e de cada disciplina, com os códigos
+  (ex.: EF07MA13, EM13MAT302). Quando ele perguntar o que colocar na pasta de uma disciplina e ano, sugira os conteúdos em ordem didática,
+  com os códigos da BNCC, os pré-requisitos e o que mais cai em prova.
+- ENEM (INEP; matriz de referência por áreas, TRI, redação com 5 competências), SSA da UPE (por série: SSA 1, 2 e 3; banca UPE/CONUPE),
+  ESA (Escola de Sargentos das Armas; Português, Matemática, História e Geografia do Brasil, Inglês e Redação, conforme o edital),
+  PMPE (Polícia Militar de Pernambuco; banca conforme o último edital, por exemplo AOCP ou IAUPE): diga o que é cobrado, o peso e o estilo da banca.
+- Informações que mudam (editais, datas, vagas, bancas, notas de corte): use a pesquisa na internet quando ela vier junto e cite a fonte pelo nome
+  do site (ex.: "segundo o Estratégia Concursos"). Sem pesquisa, avise que pode estar desatualizado e peça para conferir no edital oficial.
+- Raciocine com cuidado antes de responder: seja estratégico, completo e correto, mas fale de forma objetiva.`;
 
 const corta = (s, n) => String(s || '').slice(0, n);
 
@@ -272,7 +289,10 @@ const responder = async (req) => {
   try { b = await req.json(); } catch { return new Response('JSON inválido', { status: 400, headers: CORS() }); }
 
   // VOZ DO SOL: só a fala pedida (o texto da resposta), nunca uma instrução
+  const VOZ_GOOGLE = (ENV.VOZ_GOOGLE || '') === '1';
+  if (!VOZ_GOOGLE) b.voz = '';
   if (typeof b.tts === 'string') {
+    if (!VOZ_GOOGLE) return json({ audio: '' }, 404);
     const a = await falar(b.tts, b.voz, chave, Date.now() + 9000);
     return a ? json(a) : json({ audio: '' }, 502);
   }
@@ -300,15 +320,30 @@ const responder = async (req) => {
   contents.push({ role: 'user', parts: partes });
 
   const inicio = Date.now();
-  const r = await google(MODELOS_TEXTO(), {
-    system_instruction: { parts: [{ text: mentor ? SISTEMA_MENTOR : SISTEMA }] },
-    contents,
+  // Mentor: pensa mais (raciocínio padrão do modelo) e, se a pergunta for sobre algo que muda (edital, concurso, data), pesquisa no Google
+  const pesquisar = mentor && /(edital|concurso|banca|vaga|inscri|prova d[ae]|data d[ae]|nota de corte|cronograma|20[2-3]\d|atual|recente|[uú]ltim|novo|nova|not[ií]cia|pesquis|estrat[eé]gia|gran|pci|ufpe|upe|ssa|esa\b|pmpe|enem|inep|sisu)/i.test(String(b.pergunta || ''));
+  const corpoIA = mentor ? {
+    system_instruction: { parts: [{ text: SISTEMA_MENTOR }] }, contents,
+    generationConfig: { temperature: 0.5, maxOutputTokens: 1200 },
+    ...(pesquisar ? { tools: [{ google_search: {} }] } : {})
+  } : {
+    system_instruction: { parts: [{ text: SISTEMA }] }, contents,
     generationConfig: { temperature: 0.6, maxOutputTokens: 600, thinkingConfig: { thinkingBudget: 0 } }
-  }, chave, null, inicio + (NUVEM_LONGA ? 15000 : 7600), NUVEM_LONGA ? 14000 : 7000, true, LARGADAS());
+  };
+  let r = mentor
+    ? await google(MODELOS_TEXTO(), corpoIA, chave, null, inicio + (NUVEM_LONGA ? 28000 : 9000), NUVEM_LONGA ? 25000 : 8500, false)
+    : await google(MODELOS_TEXTO(), corpoIA, chave, null, inicio + (NUVEM_LONGA ? 15000 : 7600), NUVEM_LONGA ? 14000 : 7000, true, LARGADAS());
+  if (mentor && !r.ok && pesquisar) {   // se a pesquisa falhar (cota), responde sem ela
+    delete corpoIA.tools;
+    r = await google(MODELOS_TEXTO(), corpoIA, chave, null, Date.now() + (NUVEM_LONGA ? 15000 : 4000), NUVEM_LONGA ? 14000 : 3800, false);
+  }
   const tTexto = Date.now() - inicio;
   if (r.status === 429) return json({ texto: 'Muita gente me chamando agora! Me pergunta de novo daqui a um minutinho.', semVoz: true });
   if (!r.ok) return json({ texto: '' }, 502);
-  const texto = (r.j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
+  let texto = (r.j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
+  // fontes da pesquisa (nomes dos sites) no fim da resposta do Mentor
+  const fontes = [...new Set(((r.j.candidates?.[0]?.groundingMetadata || {}).groundingChunks || []).map(c => (c.web && (c.web.title || c.web.uri)) || '').filter(Boolean))].slice(0, 3);
+  if (mentor && texto && fontes.length) texto += `\n\nFontes: ${fontes.join(', ')}.`;
   if (/^\[?IGNORAR\]?\.?$/i.test(texto) || /^\[IGNORAR\]/i.test(texto)) return json({ texto: '', ignorar: true });
   // já devolve a voz do primeiro trecho: o Sol começa a falar em poucos segundos
   const info = { modelo: r.modelo, t_texto: tTexto };
